@@ -58,6 +58,8 @@ async function compressImage(file,maxBytes=700*1024,maxDimension=1200){if(file.s
 async function fileToBase64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file)})}
 
 async function fetchLessons(cid){return (await getDocs(collection(db,'courses',cid,'lessons'))).docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(Number(a.order)||0)-(Number(b.order)||0))}
+async function fetchHomework(cid){return (await getDocs(collection(db,'courses',cid,'homework'))).docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(Number(a.order)||0)-(Number(b.order)||0))}
+let curKind='lessons';
 async function fetchQuizzes(cid){return (await getDocs(collection(db,'courses',cid,'quizzes'))).docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(Number(a.order)||0)-(Number(b.order)||0))}
 
 /* ---------- Navigation ---------- */
@@ -65,7 +67,7 @@ function renderTabs(){$('tabs').innerHTML=sections.map(([k,l,i])=>`<button class
 async function guard(tab,fn){active=tab;renderTabs();$('content').innerHTML=loading();try{await fn()}catch(e){console.error(e);$('content').innerHTML='<div class="panel"><div class="empty">Something went wrong. Please try again.</div></div>'}}
 window.load=s=>{view={name:s};return guard(s,()=>({overview,students,courses,payments,contact})[s]())};
 window.openCourse=e=>guard('courses',()=>coursePage(dec(e)));
-window.openLesson=(a,b)=>guard('courses',()=>lessonPage(dec(a),dec(b)));
+window.openLesson=(a,b,k)=>{curKind=k==='homework'?'homework':'lessons';return guard('courses',()=>lessonPage(dec(a),dec(b)))};
 window.openStudent=e=>guard('students',()=>studentPage(dec(e)));
 async function refresh(){const v=view;try{if(v.name==='course')await coursePage(v.cid);else if(v.name==='lesson')await lessonPage(v.cid,v.lid);else if(v.name==='student')await studentPage(v.sid);else await load(active)}catch(e){console.error(e);toast('Something went wrong.')}}
 
@@ -116,6 +118,7 @@ window.deleteCourse=async e=>{
       getDocs(collection(db,'courses',cid,'quizzes'))
     ]);
     for(const lesson of lessons.docs)await deleteDoc(lesson.ref);
+    for(const h of (await getDocs(collection(db,'courses',cid,'homework'))).docs)await deleteDoc(h.ref);
     for(const quiz of quizzes.docs)await deleteDoc(quiz.ref);
     await deleteDoc(doc(db,'courses',cid));toast('Course deleted.');load('courses')
   }catch(err){console.error('Could not delete course:',err);toast(`Could not delete course${err?.code?` (${err.code})`:''}: ${err?.message||'Please try again.'}`)}
@@ -127,25 +130,27 @@ async function coursePage(cid){
   const cs=await getDoc(doc(db,'courses',cid));
   if(!cs.exists()){$('content').innerHTML='<div class="panel"><div class="empty">Course not found.</div></div>';return}
   const c={id:cid,...cs.data()};
-  const [lessons,quizzes]=await Promise.all([fetchLessons(cid),fetchQuizzes(cid)]);
+  const [lessons,quizzes,homework]=await Promise.all([fetchLessons(cid),fetchQuizzes(cid),fetchHomework(cid)]);
   const thumb=c.thumbnailBase64||c.thumbnailUrl||'';
   const lessonRows=lessons.map(l=>{
     const parts=(l.parts||[]).length+(l.videoId||l.youtubeVideoId||l.youtubeUrl?1:0);
     return `<tr class="row-click" onclick="openLesson('${enc(cid)}','${enc(l.id)}')"><td><span class="badge ok">Lesson</span></td><td><strong>${esc(l.title||'Untitled Lesson')}</strong></td><td>${Number(l.order)||1}</td><td>${parts} part(s)${(l.resources||[]).length?` · ${(l.resources||[]).length} file(s)`:''}</td><td><div class="actions" onclick="event.stopPropagation()"><button class="btn secondary" onclick="openLesson('${enc(cid)}','${enc(l.id)}')"><span class="mi">folder_open</span>Open</button><button class="btn secondary" onclick="editLesson('${enc(cid)}','${enc(l.id)}')"><span class="mi">edit</span></button><button class="btn danger" onclick="deleteLesson('${enc(cid)}','${enc(l.id)}')"><span class="mi">delete</span></button></div></td></tr>`}).join('');
+  const hwRows=homework.map(l=>{const parts=(l.parts||[]).length+(l.videoId||l.youtubeVideoId||l.youtubeUrl?1:0);const H=`'${enc(cid)}','${enc(l.id)}','homework'`;return `<tr class="row-click" onclick="openLesson(${H})"><td><span class="badge" style="background:#eaf1fb;color:#2a5db0">Homework</span></td><td><strong>${esc(l.title||'Untitled Homework')}</strong></td><td>${Number(l.order)||1}</td><td>${parts} part(s)${(l.resources||[]).length?` · ${(l.resources||[]).length} file(s)`:''}</td><td><div class="actions" onclick="event.stopPropagation()"><button class="btn secondary" onclick="openLesson(${H})"><span class="mi">folder_open</span>Open</button><button class="btn secondary" onclick="editLesson(${H})"><span class="mi">edit</span></button><button class="btn danger" onclick="deleteLesson(${H})"><span class="mi">delete</span></button></div></td></tr>`}).join('');
   const quizRows=quizzes.map(q=>`<tr><td><span class="badge warn">Quiz</span></td><td><strong>${esc(q.title||'Untitled quiz')}</strong></td><td>${Number(q.order)||1}</td><td>${Number(q.durationMinutes)||30} min</td><td><div class="actions"><button class="btn secondary" onclick="editQuiz('${enc(cid)}','${enc(q.id)}')"><span class="mi">edit</span>Edit</button><button class="btn danger" onclick="deleteQuiz('${enc(cid)}','${enc(q.id)}')"><span class="mi">delete</span></button></div></td></tr>`).join('');
   $('content').innerHTML=`${crumbs([['Courses',"load('courses')"],[c.title||'Course',null]])}
   <div class="panel"><div class="section-head"><div class="row-title">${thumb?`<img class="course-thumb" src="${esc(thumb)}" alt="">`:''}<div><h2>${esc(c.title||'Untitled')}</h2><div class="muted">${esc(c.description||'')}</div></div></div><div class="actions"><button class="btn secondary" onclick="editCourse('${enc(cid)}')"><span class="mi">edit</span>Edit course</button><button class="btn danger" onclick="deleteCourse('${enc(cid)}')"><span class="mi">delete</span></button></div></div>
-  <div class="info-grid"><div><div class="k">Access</div><div class="v">${esc(modeLabel(c))}</div></div>${modeOf(c)==='course_code'?`<div><div class="k">Course code</div><div class="v">${esc(c.courseAccessCode||'—')}</div></div>`:''}<div><div class="k">Lessons</div><div class="v">${lessons.length}</div></div><div><div class="k">Quizzes</div><div class="v">${quizzes.length}</div></div></div></div>
-  <div class="panel"><div class="section-head"><div><h2>Course content</h2><div class="muted">Add lessons (each one has its own parts) and quizzes.</div></div><div class="actions"><button class="btn primary" onclick="newLesson('${enc(cid)}')"><span class="mi">add</span>Add Lesson</button><button class="btn secondary" onclick="newQuiz('${enc(cid)}')"><span class="mi">quiz</span>Add Quiz</button></div></div>
-  <div class="table-wrap"><table class="table"><thead><tr><th>Type</th><th>Name</th><th>Order</th><th>Details</th><th></th></tr></thead><tbody>${lessonRows+quizRows||`<tr><td colspan="5"><div class="empty">Nothing here yet. Add the first lesson or quiz.</div></td></tr>`}</tbody></table></div></div>`;
+  <div class="info-grid"><div><div class="k">Access</div><div class="v">${esc(modeLabel(c))}</div></div>${modeOf(c)==='course_code'?`<div><div class="k">Course code</div><div class="v">${esc(c.courseAccessCode||'—')}</div></div>`:''}<div><div class="k">Lessons</div><div class="v">${lessons.length}</div></div><div><div class="k">Homework</div><div class="v">${homework.length}</div></div><div><div class="k">Quizzes</div><div class="v">${quizzes.length}</div></div></div></div>
+  <div class="panel"><div class="section-head"><div><h2>Course content</h2><div class="muted">Add lessons (each one has its own parts) and quizzes.</div></div><div class="actions"><button class="btn primary" onclick="newLesson('${enc(cid)}')"><span class="mi">add</span>Add Lesson</button><button class="btn secondary" onclick="newLesson('${enc(cid)}','homework')"><span class="mi">assignment</span>Add Homework</button><button class="btn secondary" onclick="newQuiz('${enc(cid)}')"><span class="mi">quiz</span>Add Quiz</button></div></div>
+  <div class="table-wrap"><table class="table"><thead><tr><th>Type</th><th>Name</th><th>Order</th><th>Details</th><th></th></tr></thead><tbody>${lessonRows+hwRows+quizRows||`<tr><td colspan="5"><div class="empty">Nothing here yet. Add the first lesson or quiz.</div></td></tr>`}</tbody></table></div></div>`;
 }
 
 /* ---------- Lessons ---------- */
 function lessonForm(c,l={},lid=''){
+  const hw=curKind==='homework';
   const mode=modeOf(c);
   const expired=!!(l.codeExpiresAt&&Number(l.codeExpiresAt)<=Date.now()&&l.codeRotation!=='never');
   const initialCode=mode==='session_code'?(expired||!l.accessCode?generateNumericCode(6):l.accessCode):'';
-  modal(lid?'Edit Lesson':'Add Lesson',`<form id="lesson-form"><div class="field"><label>Lesson Name</label><input id="lt" value="${esc(l.title||'')}" required></div><div class="field"><label>Order</label><input id="lo" type="number" min="1" value="${Number(l.order)||1}" required></div><div class="field"><label>Main video link (optional)</label><input id="lv" value="${esc(l.videoId||l.youtubeVideoId||l.youtubeUrl||'')}" placeholder="YouTube link"><div class="hint">Leave empty if the lesson will be split into parts — you add the parts inside the lesson page.</div></div>${mode==='session_code'?`<div style="border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px"><h3 style="margin:0 0 8px">Session access code</h3><div class="field"><label>Numeric code</label><div style="display:flex;gap:8px"><input id="lesson-code" inputmode="numeric" pattern="[0-9]*" maxlength="12" value="${esc(initialCode)}"><button type="button" class="btn secondary" id="generate-lesson-code">Generate</button><button type="button" class="btn secondary" id="copy-lesson-code">Copy</button></div></div><div class="field"><label>Automatic code renewal</label><select id="lesson-code-rotation"><option value="never" ${(l.codeRotation||'never')==='never'?'selected':''}>Never — keep the same code</option><option value="daily" ${l.codeRotation==='daily'?'selected':''}>Every day</option><option value="weekly" ${l.codeRotation==='weekly'?'selected':''}>Every week</option><option value="monthly" ${l.codeRotation==='monthly'?'selected':''}>Every month (30 days)</option></select></div></div>`:''}<div class="actions"><button class="btn primary">Save Lesson</button><button type="button" class="btn secondary" onclick="closeModal()">Cancel</button></div></form>`);
+  modal(lid?(hw?'Edit Homework':'Edit Lesson'):(hw?'Add Homework':'Add Lesson'),`<form id="lesson-form"><div class="field"><label>${hw?'Homework Name':'Lesson Name'}</label><input id="lt" value="${esc(l.title||'')}" required></div><div class="field"><label>Order</label><input id="lo" type="number" min="1" value="${Number(l.order)||1}" required></div><div class="field"><label>Main video link (optional)</label><input id="lv" value="${esc(l.videoId||l.youtubeVideoId||l.youtubeUrl||'')}" placeholder="YouTube link"><div class="hint">Leave empty if the lesson will be split into parts — you add the parts inside the lesson page.</div></div>${mode==='session_code'?`<div style="border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px"><h3 style="margin:0 0 8px">Session access code</h3><div class="field"><label>Numeric code</label><div style="display:flex;gap:8px"><input id="lesson-code" inputmode="numeric" pattern="[0-9]*" maxlength="12" value="${esc(initialCode)}"><button type="button" class="btn secondary" id="generate-lesson-code">Generate</button><button type="button" class="btn secondary" id="copy-lesson-code">Copy</button></div></div><div class="field"><label>Automatic code renewal</label><select id="lesson-code-rotation"><option value="never" ${(l.codeRotation||'never')==='never'?'selected':''}>Never — keep the same code</option><option value="daily" ${l.codeRotation==='daily'?'selected':''}>Every day</option><option value="weekly" ${l.codeRotation==='weekly'?'selected':''}>Every week</option><option value="monthly" ${l.codeRotation==='monthly'?'selected':''}>Every month (30 days)</option></select></div></div>`:''}<div class="actions"><button class="btn primary">${hw?'Save Homework':'Save Lesson'}</button><button type="button" class="btn secondary" onclick="closeModal()">Cancel</button></div></form>`);
   if(mode==='session_code'){
     $('generate-lesson-code').onclick=()=>{$('lesson-code').value=generateNumericCode(6)};
     $('copy-lesson-code').onclick=async()=>{try{await navigator.clipboard.writeText($('lesson-code').value);toast('Code copied.')}catch{toast('Select and copy the code.')}};
@@ -162,17 +167,17 @@ function lessonForm(c,l={},lid=''){
       p.accessCode=code;p.codeRotation=rotation;p.codeExpiresAt=interval?Date.now()+interval:null;p.codeUpdatedAt=Date.now();
     }else{p.accessCode='';p.codeRotation='never';p.codeExpiresAt=null;p.codeUpdatedAt=null}
     try{
-      if(lid){await updateDoc(doc(db,'courses',c.id,'lessons',lid),p);closeModal();toast('Lesson saved.');refresh()}
-      else{p.createdAt=serverTimestamp();p.parts=[];const nid=id();await setDoc(doc(db,'courses',c.id,'lessons',nid),p);closeModal();toast('Lesson created. Now add its parts.');openLesson(enc(c.id),enc(nid))}
+      if(lid){await updateDoc(doc(db,'courses',c.id,curKind,lid),p);closeModal();toast('Lesson saved.');refresh()}
+      else{p.createdAt=serverTimestamp();p.parts=[];const nid=id();await setDoc(doc(db,'courses',c.id,curKind,nid),p);closeModal();toast('Lesson created. Now add its parts.');openLesson(enc(c.id),enc(nid),curKind)}
     }catch(err){console.error(err);toast('Could not save lesson.')}
   };
 }
-window.newLesson=async e=>{const cid=dec(e),s=await getDoc(doc(db,'courses',cid));if(!s.exists())return toast('Course not found.');const n=(await getDocs(collection(db,'courses',cid,'lessons'))).size;lessonForm({id:cid,...s.data()},{order:n+1})};
-window.editLesson=async(a,b)=>{const cid=dec(a),lid=dec(b);const [c,l]=await Promise.all([getDoc(doc(db,'courses',cid)),getDoc(doc(db,'courses',cid,'lessons',lid))]);if(!c.exists()||!l.exists())return toast('Lesson not found.');lessonForm({id:cid,...c.data()},l.data(),lid)};
-window.deleteLesson=async(a,b)=>{
+window.newLesson=async(e,k)=>{curKind=k==='homework'?'homework':'lessons';const cid=dec(e),s=await getDoc(doc(db,'courses',cid));if(!s.exists())return toast('Course not found.');const n=(await getDocs(collection(db,'courses',cid,curKind))).size;lessonForm({id:cid,...s.data()},{order:n+1})};
+window.editLesson=async(a,b,k)=>{curKind=k==='homework'?'homework':'lessons';const cid=dec(a),lid=dec(b);const [c,l]=await Promise.all([getDoc(doc(db,'courses',cid)),getDoc(doc(db,'courses',cid,curKind,lid))]);if(!c.exists()||!l.exists())return toast('Lesson not found.');lessonForm({id:cid,...c.data()},l.data(),lid)};
+window.deleteLesson=async(a,b,k)=>{curKind=k==='homework'?'homework':'lessons';
   const cid=dec(a),lid=dec(b);
   if(!confirm('Delete this lesson with all its parts and files?'))return;
-  try{await deleteDoc(doc(db,'courses',cid,'lessons',lid));toast('Lesson deleted.');if(view.name==='lesson')openCourse(enc(cid));else refresh()}catch{toast('Could not delete lesson.')}
+  try{await deleteDoc(doc(db,'courses',cid,curKind,lid));toast('Lesson deleted.');if(view.name==='lesson')openCourse(enc(cid));else refresh()}catch{toast('Could not delete lesson.')}
 };
 
 /* ---------- Lesson page: parts + resources ---------- */
@@ -182,13 +187,13 @@ function partsTable(parts,cid,lid){
 }
 async function lessonPage(cid,lid){
   view={name:'lesson',cid,lid};
-  const [cs,ls]=await Promise.all([getDoc(doc(db,'courses',cid)),getDoc(doc(db,'courses',cid,'lessons',lid))]);
+  const [cs,ls]=await Promise.all([getDoc(doc(db,'courses',cid)),getDoc(doc(db,'courses',cid,curKind,lid))]);
   if(!cs.exists()||!ls.exists()){$('content').innerHTML='<div class="panel"><div class="empty">Lesson not found.</div></div>';return}
   const c={id:cid,...cs.data()},l={id:lid,...ls.data()};
   window._resourceCourseId=cid;window._resourceLessonId=lid;
   const main=l.videoId||l.youtubeVideoId||l.youtubeUrl||'';
   $('content').innerHTML=`${crumbs([['Courses',"load('courses')"],[c.title||'Course',`openCourse('${enc(cid)}')`],[l.title||'Lesson',null]])}
-  <div class="panel"><div class="section-head"><div><h2>${esc(l.title||'Untitled Lesson')}</h2><div class="muted">Lesson settings</div></div><div class="actions"><button class="btn secondary" onclick="editLesson('${enc(cid)}','${enc(lid)}')"><span class="mi">edit</span>Edit lesson</button><button class="btn danger" onclick="deleteLesson('${enc(cid)}','${enc(lid)}')"><span class="mi">delete</span></button></div></div>
+  <div class="panel"><div class="section-head"><div><h2>${esc(l.title||'Untitled Lesson')}</h2><div class="muted">${curKind==='homework'?'Homework settings':'Lesson settings'}</div></div><div class="actions"><button class="btn secondary" onclick="editLesson('${enc(cid)}','${enc(lid)}','${curKind}')"><span class="mi">edit</span>Edit lesson</button><button class="btn danger" onclick="deleteLesson('${enc(cid)}','${enc(lid)}','${curKind}')"><span class="mi">delete</span></button></div></div>
   <div class="info-grid"><div><div class="k">Course</div><div class="v">${esc(c.title||'')}</div></div><div><div class="k">Order</div><div class="v">${Number(l.order)||1}</div></div><div><div class="k">Main video</div><div class="v">${main?`<a href="${esc(main)}" target="_blank" rel="noopener noreferrer">${esc(String(main).slice(0,30))}</a>`:'None (using parts)'}</div></div>${modeOf(c)==='session_code'?`<div><div class="k">Lesson code</div><div class="v">${esc(l.accessCode||'—')}</div></div>`:''}</div></div>
   <div class="panel"><div class="section-head"><div><h2>Lesson parts</h2><div class="muted">Each part has its own name and YouTube link. Students switch between them inside the lesson.</div></div><button class="btn primary" onclick="partForm('${enc(cid)}','${enc(lid)}',-1)"><span class="mi">add</span>Add Part</button></div><div id="parts-box">${partsTable(l.parts||[],cid,lid)}</div></div>
   <div class="panel"><div class="section-head"><div><h2>Resources</h2><div class="muted">Files students see inside this lesson.</div></div></div>${resourceUploader()}<div id="lesson-resource-list">${renderLessonResources(l.resources||[])}</div></div>`;
@@ -197,14 +202,14 @@ async function lessonPage(cid,lid){
 }
 window.partForm=async(a,b,i)=>{
   const cid=dec(a),lid=dec(b),idx=Number(i);
-  const s=await getDoc(doc(db,'courses',cid,'lessons',lid));if(!s.exists())return toast('Lesson not found.');
+  const s=await getDoc(doc(db,'courses',cid,curKind,lid));if(!s.exists())return toast('Lesson not found.');
   const p=idx>=0?(s.data().parts||[])[idx]||{}:{};
   modal(idx>=0?'Edit Part':'Add Part',`<form id="part-form"><div class="field"><label>Part name</label><input id="pt" maxlength="150" value="${esc(p.title||'')}" placeholder="Example: Part 1 — Introduction" required></div><div class="field"><label>YouTube link</label><input id="pu" value="${esc(p.url||'')}" placeholder="Paste the YouTube link" required></div><div class="actions"><button class="btn primary">Save Part</button><button type="button" class="btn secondary" onclick="closeModal()">Cancel</button></div></form>`);
   $('part-form').onsubmit=async e=>{
     e.preventDefault();
     const url=$('pu').value.trim();if(!ytId(url))return toast('Enter a valid YouTube link.');
     try{
-      const ref=doc(db,'courses',cid,'lessons',lid),fresh=await getDoc(ref),parts=[...(fresh.data().parts||[])];
+      const ref=doc(db,'courses',cid,curKind,lid),fresh=await getDoc(ref),parts=[...(fresh.data().parts||[])];
       const item={id:p.id||id(),title:$('pt').value.trim(),url};
       if(idx>=0)parts[idx]=item;else parts.push(item);
       await updateDoc(ref,{parts,updatedAt:serverTimestamp()});closeModal();toast('Part saved.');refresh()
@@ -213,12 +218,12 @@ window.partForm=async(a,b,i)=>{
 };
 window.movePart=async(a,b,i,dir)=>{
   const cid=dec(a),lid=dec(b),idx=Number(i),to=idx+Number(dir);
-  try{const ref=doc(db,'courses',cid,'lessons',lid),s=await getDoc(ref),parts=[...(s.data().parts||[])];if(to<0||to>=parts.length)return;[parts[idx],parts[to]]=[parts[to],parts[idx]];await updateDoc(ref,{parts});refresh()}catch{toast('Could not reorder parts.')}
+  try{const ref=doc(db,'courses',cid,curKind,lid),s=await getDoc(ref),parts=[...(s.data().parts||[])];if(to<0||to>=parts.length)return;[parts[idx],parts[to]]=[parts[to],parts[idx]];await updateDoc(ref,{parts});refresh()}catch{toast('Could not reorder parts.')}
 };
 window.deletePart=async(a,b,i)=>{
   if(!confirm('Delete this part?'))return;
   const cid=dec(a),lid=dec(b);
-  try{const ref=doc(db,'courses',cid,'lessons',lid),s=await getDoc(ref),parts=[...(s.data().parts||[])];parts.splice(Number(i),1);await updateDoc(ref,{parts});toast('Part deleted.');refresh()}catch{toast('Could not delete part.')}
+  try{const ref=doc(db,'courses',cid,curKind,lid),s=await getDoc(ref),parts=[...(s.data().parts||[])];parts.splice(Number(i),1);await updateDoc(ref,{parts});toast('Part deleted.');refresh()}catch{toast('Could not delete part.')}
 };
 
 /* ---------- Resources (inside the lesson page) ---------- */
@@ -243,7 +248,7 @@ async function uploadLessonResource(cid,lid){
       const response=await fetch(DOCUMENT_UPLOAD_SCRIPT_URL,{method:'POST',body:JSON.stringify(payload)});
       clearInterval(timer);const result=await response.json();
       if(result.status!=='success')throw new Error(result.message||'Upload failed');
-      const ref=doc(db,'courses',cid,'lessons',lid),snap=await getDoc(ref);if(!snap.exists())throw new Error('Lesson not found');
+      const ref=doc(db,'courses',cid,curKind,lid),snap=await getDoc(ref);if(!snap.exists())throw new Error('Lesson not found');
       const resources=snap.data().resources||[];
       resources.push({name:displayName,url:result.fileUrl,type:file.type||'File',originalName:file.name,uploadedAt:new Date().toISOString()});
       await updateDoc(ref,{resources});
@@ -258,7 +263,7 @@ async function uploadLessonResource(cid,lid){
 }
 window.deleteLessonResource=async(a,b,index)=>{
   const cid=dec(a),lid=dec(b),i=Number(index);if(!confirm('Delete this resource?'))return;
-  try{const ref=doc(db,'courses',cid,'lessons',lid),snap=await getDoc(ref);if(!snap.exists())return toast('Lesson not found.');const resources=snap.data().resources||[];if(i<0||i>=resources.length)return;resources.splice(i,1);await updateDoc(ref,{resources});toast('Resource deleted.');$('lesson-resource-list').innerHTML=renderLessonResources((await getDoc(ref)).data().resources||[])}catch(error){console.error(error);toast('Could not delete resource.')}
+  try{const ref=doc(db,'courses',cid,curKind,lid),snap=await getDoc(ref);if(!snap.exists())return toast('Lesson not found.');const resources=snap.data().resources||[];if(i<0||i>=resources.length)return;resources.splice(i,1);await updateDoc(ref,{resources});toast('Resource deleted.');$('lesson-resource-list').innerHTML=renderLessonResources((await getDoc(ref)).data().resources||[])}catch(error){console.error(error);toast('Could not delete resource.')}
 };
 
 /* ---------- Quizzes ---------- */
