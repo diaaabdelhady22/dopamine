@@ -151,29 +151,31 @@ function lessonForm(c,l={},lid=''){
   const expired=!!(l.codeExpiresAt&&Number(l.codeExpiresAt)<=Date.now()&&l.codeRotation!=='never');
   const initialCode=mode==='session_code'?(expired||!l.accessCode?generateNumericCode(6):l.accessCode):'';
   modal(lid?(hw?'Edit Homework':'Edit Lesson'):(hw?'Add Homework':'Add Lesson'),`<form id="lesson-form"><div class="field"><label>${hw?'Homework Name':'Lesson Name'}</label><input id="lt" value="${esc(l.title||'')}" required></div><div class="field"><label>Order</label><input id="lo" type="number" min="1" value="${Number(l.order)||1}" required></div><div class="field"><label>Main video link (optional)</label><input id="lv" value="${esc(l.videoId||l.youtubeVideoId||l.youtubeUrl||'')}" placeholder="YouTube link"><div class="hint">Leave empty if the lesson will be split into parts — you add the parts inside the lesson page.</div></div>${mode==='session_code'&&!hw?`<div style="border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px"><h3 style="margin:0 0 8px">Session access code</h3><div class="field"><label>Numeric code</label><div style="display:flex;gap:8px"><input id="lesson-code" inputmode="numeric" pattern="[0-9]*" maxlength="12" value="${esc(initialCode)}"><button type="button" class="btn secondary" id="generate-lesson-code">Generate</button><button type="button" class="btn secondary" id="copy-lesson-code">Copy</button></div></div><div class="field"><label>Automatic code renewal</label><select id="lesson-code-rotation"><option value="never" ${(l.codeRotation||'never')==='never'?'selected':''}>Never — keep the same code</option><option value="daily" ${l.codeRotation==='daily'?'selected':''}>Every day</option><option value="weekly" ${l.codeRotation==='weekly'?'selected':''}>Every week</option><option value="monthly" ${l.codeRotation==='monthly'?'selected':''}>Every month (30 days)</option></select></div></div>`:''}<div class="actions"><button class="btn primary">${hw?'Save Homework':'Save Lesson'}</button><button type="button" class="btn secondary" onclick="closeModal()">Cancel</button></div></form>`);
-  if(mode==='session_code'){
-    $('generate-lesson-code').onclick=()=>{$('lesson-code').value=generateNumericCode(6)};
-    $('copy-lesson-code').onclick=async()=>{try{await navigator.clipboard.writeText($('lesson-code').value);toast('Code copied.')}catch{toast('Select and copy the code.')}};
+  if(mode==='session_code'&&!hw){
+    const generateButton=$('generate-lesson-code');
+    const copyButton=$('copy-lesson-code');
+    if(generateButton)generateButton.onclick=()=>{const codeInput=$('lesson-code');if(codeInput)codeInput.value=generateNumericCode(6)};
+    if(copyButton)copyButton.onclick=async()=>{try{const codeInput=$('lesson-code');if(!codeInput)return;await navigator.clipboard.writeText(codeInput.value);toast('Code copied.')}catch{toast('Select and copy the code.')}};
   }
   $('lesson-form').onsubmit=async e=>{
     e.preventDefault();
     const main=$('lv').value.trim();
     if(main&&!ytId(main))return toast('Enter a valid YouTube link.');
     const p={title:$('lt').value.trim(),videoId:main,order:Number($('lo').value)||1,updatedAt:serverTimestamp()};
-    if(mode==='session_code'){
+    if(mode==='session_code'&&!hw){
       const code=$('lesson-code').value.trim();
       if(!/^\d{4,12}$/.test(code))return toast('Code must contain 4–12 digits.');
       const rotation=$('lesson-code-rotation').value,interval={daily:86400000,weekly:604800000,monthly:2592000000,never:0}[rotation];
       p.accessCode=code;p.codeRotation=rotation;p.codeExpiresAt=interval?Date.now()+interval:null;p.codeUpdatedAt=Date.now();
     }else{p.accessCode='';p.codeRotation='never';p.codeExpiresAt=null;p.codeUpdatedAt=null}
     try{
-      if(lid){await updateDoc(doc(db,'courses',c.id,curKind,lid),p);closeModal();toast('Lesson saved.');refresh()}
-      else{p.createdAt=serverTimestamp();p.parts=[];const nid=id();await setDoc(doc(db,'courses',c.id,curKind,nid),p);closeModal();toast('Lesson created. Now add its parts.');openLesson(enc(c.id),enc(nid),curKind)}
-    }catch(err){console.error(err);toast('Could not save lesson.')}
+      if(lid){await updateDoc(doc(db,'courses',c.id,curKind,lid),p);view={name:'lesson',cid:c.id,lid};closeModal();toast(hw?'Homework saved successfully.':'Lesson saved successfully.');await refresh()}
+      else{p.createdAt=serverTimestamp();p.parts=[];const nid=id();await setDoc(doc(db,'courses',c.id,curKind,nid),p);closeModal();toast(hw?'Homework created successfully.':'Lesson created. Now add its parts.');openLesson(enc(c.id),enc(nid),curKind)}
+    }catch(err){console.error('Save lesson/homework failed:',err);toast(`Could not save ${hw?'homework':'lesson'}${err?.code?` (${err.code})`:''}: ${err?.message||'Please try again.'}`)}
   };
 }
 window.newLesson=async(e,k)=>{curKind=k==='homework'?'homework':'lessons';const cid=dec(e),s=await getDoc(doc(db,'courses',cid));if(!s.exists())return toast('Course not found.');const n=(await getDocs(collection(db,'courses',cid,curKind))).size;lessonForm({id:cid,...s.data()},{order:n+1})};
-window.editLesson=async(a,b,k)=>{curKind=k==='homework'?'homework':'lessons';const cid=dec(a),lid=dec(b);const [c,l]=await Promise.all([getDoc(doc(db,'courses',cid)),getDoc(doc(db,'courses',cid,curKind,lid))]);if(!c.exists()||!l.exists())return toast('Lesson not found.');lessonForm({id:cid,...c.data()},l.data(),lid)};
+window.editLesson=async(a,b,k)=>{curKind=k==='homework'?'homework':'lessons';const cid=dec(a),lid=dec(b);view={name:'lesson',cid,lid};const [c,l]=await Promise.all([getDoc(doc(db,'courses',cid)),getDoc(doc(db,'courses',cid,curKind,lid))]);if(!c.exists()||!l.exists())return toast(curKind==='homework'?'Homework not found.':'Lesson not found.');lessonForm({id:cid,...c.data()},l.data(),lid)};
 window.deleteLesson=async(a,b,k)=>{curKind=k==='homework'?'homework':'lessons';
   const cid=dec(a),lid=dec(b);
   if(!confirm('Delete this lesson with all its parts and files?'))return;
