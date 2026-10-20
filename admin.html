@@ -21,21 +21,26 @@
 </head>
 <body>
 <header class="header"><div class="container"><a class="brand" href="admin.html"><img src="logo.png" alt="DOPAMINE"></a><button class="btn secondary" onclick="location.href='index.html'"><span class="mi">open_in_new</span>Website</button></div></header>
+<div id="login-screen" style="position:fixed;inset:0;z-index:9999;background:#f7f8fa;display:grid;place-items:center;padding:20px"><div class="panel" style="width:min(440px,100%);padding:30px"><div class="eyebrow">DOPAMINE ADMIN</div><h1 style="margin:8px 0">Sign in</h1><p class="muted">Enter your private staff ID to continue.</p><form id="staff-login"><div class="field" style="margin:18px 0"><label for="staff-id">Staff ID</label><input id="staff-id" autocomplete="username" required placeholder="Enter your staff ID" style="width:100%;padding:12px;border:1px solid var(--line);border-radius:9px"></div><div id="login-error" style="color:var(--danger);font-size:13px;margin-bottom:12px"></div><button id="login-submit" class="btn primary" style="width:100%">Sign in</button></form><p class="hint" style="margin-top:16px">Your session will be remembered on this browser until you sign out.</p></div></div>
 <main class="admin-main"><div class="container">
-<div class="title"><div><div class="eyebrow">Administration</div><h1>DOPAMINE Admin</h1><div class="muted">Simple management for students, courses, lessons and platform messages.</div></div></div>
+<div class="title"><div><div class="eyebrow">Administration</div><h1>DOPAMINE Admin</h1><div class="muted">Simple management for students, courses, lessons and platform messages.</div><div id="staff-badge" class="muted" style="margin-top:8px"></div></div><button class="btn secondary" id="staff-logout" style="display:none">Sign out</button></div>
 
 <nav class="tabs" id="tabs"></nav><div id="content"></div>
-<div style="margin-top:60px;padding-top:20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end"><button class="btn danger" onclick="location.href='danger.html'"><span class="mi">warning</span>Danger Zone</button></div>
+<div id="danger-zone-link" style="margin-top:60px;padding-top:20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end"><button class="btn danger" onclick="location.href='danger.html'"><span class="mi">warning</span>Danger Zone</button></div>
 </div></main><div id="modal" class="modal"></div><div id="toast" class="toast"></div>
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
 import {getFirestore,collection,doc,getDoc,getDocs,setDoc,addDoc,updateDoc,serverTimestamp,deleteDoc,query,where} from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
 const firebaseConfig={apiKey:"AIzaSyDD1_ssoVaIyIfwYAs7jT_g0pFdr1IlI",authDomain:"dorar-17b10.firebaseapp.com",projectId:"dorar-17b10",storageBucket:"dorar-17b10.firebasestorage.app",messagingSenderId:"740800324300",appId:"1:740800324300:web:cd819b2910a53475af5869"};
 const app=initializeApp(firebaseConfig),db=getFirestore(app);
+// Only SHA-256 digests are stored in this client file; raw staff IDs are not embedded.
+const STAFF_ID_HASHES={teacher:"edca02953868274b99324a0f3e71f854e76e25764ccec241a5cdc11fbd2ad84f",assistant:"05c04ba5def12cdcf1bb0e2ecdac87e7226b1ffe2f838bc1a4fceff9f0058094"};
+const STAFF_SESSION_KEY="dopamine_staff_session_v1";
+let staffRole=null,staffPermissions={};
 const DOCUMENT_UPLOAD_SCRIPT_URL='https://script.google.com/macros/s/AKfycbyfokYL63LhXhWWsw46X1799Jsa20i9RBMlh4fcoj_fEdbp35HoVa9S2F_I-gqfgzL3Cg/exec';
 
 /* ---------- Structure: Courses > Course > Lesson > Parts | Students > Student ---------- */
-const sections=[['overview','Overview','dashboard'],['courses','Courses','school'],['students','Students','group'],['payments','Payments','payments'],['contact','Contact','contact_support']];
+const sections=[['overview','Overview','dashboard'],['courses','Courses','school'],['students','Students','group'],['payments','Payments','payments'],['contact','Contact','contact_support'],['permissions','Assistant permissions','admin_panel_settings']];
 let active='overview';
 let view={name:'overview'};
 const enc=encodeURIComponent,dec=decodeURIComponent;
@@ -63,12 +68,12 @@ let curKind='lessons';
 async function fetchQuizzes(cid){return (await getDocs(collection(db,'courses',cid,'quizzes'))).docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(Number(a.order)||0)-(Number(b.order)||0))}
 
 /* ---------- Navigation ---------- */
-function renderTabs(){$('tabs').innerHTML=sections.map(([k,l,i])=>`<button class="${active===k?'active':''}" onclick="load('${k}')"><span class="mi">${i}</span>${l}</button>`).join('')}
+function renderTabs(){$('tabs').innerHTML=sections.filter(([k])=>k!=='permissions'||staffRole==='teacher').filter(([k])=>k!=='payments'||staffRole==='teacher'||staffPermissions.paymentsView).map(([k,l,i])=>`<button class="${active===k?'active':''}" onclick="load('${k}')"><span class="mi">${i}</span>${l}</button>`).join('')}
 async function guard(tab,fn){active=tab;renderTabs();$('content').innerHTML=loading();try{await fn()}catch(e){console.error(e);$('content').innerHTML='<div class="panel"><div class="empty">Something went wrong. Please try again.</div></div>'}}
-window.load=s=>{view={name:s};return guard(s,()=>({overview,students,courses,payments,contact})[s]())};
-window.openCourse=e=>guard('courses',()=>coursePage(dec(e)));
-window.openLesson=(a,b,k)=>{curKind=k==='homework'?'homework':'lessons';return guard('courses',()=>lessonPage(dec(a),dec(b)))};
-window.openStudent=e=>guard('students',()=>studentPage(dec(e)));
+window.load=s=>{if(!staffRole)return;if(s==='permissions'&&staffRole!=='teacher')return toast('Only the teacher can change assistant permissions.');if(s==='payments'&&!permissionAllowed('paymentsView'))return toast('You do not have permission to view payments.');if(s==='courses'&&!permissionAllowed('coursesView'))return toast('You do not have permission to view courses.');if(s==='students'&&!permissionAllowed('studentsView'))return toast('You do not have permission to view students.');if(s==='contact'&&!permissionAllowed('contactManage'))return toast('You do not have permission to manage contact information.');view={name:s};return guard(s,()=>({overview,students,courses,payments,contact,permissions:permissionPage})[s]())};
+window.openCourse=e=>{if(!permissionAllowed('coursesView'))return toast('You do not have permission to view courses.');return guard('courses',()=>coursePage(dec(e)))};
+window.openLesson=(a,b,k)=>{if(!permissionAllowed('coursesView'))return toast('You do not have permission to view courses.');curKind=k==='homework'?'homework':'lessons';return guard('courses',()=>lessonPage(dec(a),dec(b)))};
+window.openStudent=e=>{if(!permissionAllowed('studentsView'))return toast('You do not have permission to view students.');return guard('students',()=>studentPage(dec(e)))};
 async function refresh(){const v=view;try{if(v.name==='course')await coursePage(v.cid);else if(v.name==='lesson')await lessonPage(v.cid,v.lid);else if(v.name==='student')await studentPage(v.sid);else await load(active)}catch(e){console.error(e);toast('Something went wrong.')}}
 
 /* ---------- Overview ---------- */
@@ -393,6 +398,48 @@ async function contact(){
   $('content').innerHTML=`<div class="panel"><div class="section-head"><div><h2>Contact Information</h2><div class="muted">These details are used by the public contact page.</div></div></div><form id="cf"><div class="form-grid"><div class="field"><label>Email</label><input id="ce" value="${esc(c.email||'')}"></div><div class="field"><label>Phone</label><input id="cp" value="${esc(c.phone||'')}"></div><div class="field"><label>WhatsApp</label><input id="cw" value="${esc(c.whatsapp||'')}"></div><div class="field"><label>Address</label><input id="ca" value="${esc(c.address||'')}"></div><div class="field"><label>Facebook link</label><input id="cfacebook" type="url" value="${esc(c.facebook||'')}" placeholder="https://facebook.com/..."></div><div class="field"><label>TikTok link</label><input id="ctiktok" type="url" value="${esc(c.tiktok||'')}" placeholder="https://tiktok.com/@..."></div><div class="field"><label>YouTube link</label><input id="cyoutube" type="url" value="${esc(c.youtube||'')}" placeholder="https://youtube.com/@..."></div><div class="field full"><label>Message</label><textarea id="cm">${esc(c.message||'')}</textarea></div></div><button class="btn primary">Save Contact</button></form></div>`;
   $('cf').onsubmit=async e=>{e.preventDefault();try{await setDoc(doc(db,'settings','contact'),{email:$('ce').value.trim(),phone:$('cp').value.trim(),whatsapp:$('cw').value.trim(),address:$('ca').value.trim(),facebook:$('cfacebook').value.trim(),tiktok:$('ctiktok').value.trim(),youtube:$('cyoutube').value.trim(),message:$('cm').value.trim(),updatedAt:serverTimestamp()},{merge:true});toast('Contact information saved.')}catch(error){console.error(error);toast('Could not save contact information.')}};
 }
-load('overview');
-
+const DEFAULT_ASSISTANT_PERMISSIONS={coursesView:true,coursesEdit:true,coursesDelete:false,studentsView:true,studentsEdit:true,studentsAccess:true,studentsVerify:true,studentsDelete:false,paymentsView:false,paymentsManage:false,contactManage:false,dangerZone:false};
+const PERMISSION_LABELS=[['coursesView','View courses and lessons'],['coursesEdit','Create/edit courses, lessons, quizzes and resources'],['coursesDelete','Delete courses, lessons and quizzes'],['studentsView','View student records'],['studentsEdit','Edit student details and instructions'],['studentsAccess','Grant/revoke course or lesson access; pause accounts'],['studentsVerify','Approve/reject student verification'],['studentsDelete','Delete student records'],['paymentsView','View payment requests and receipts'],['paymentsManage','Approve/reject payments and change payment numbers'],['contactManage','Edit contact information'],['dangerZone','Open Danger Zone']];
+function permissionAllowed(key){return staffRole==='teacher'||!!staffPermissions[key]}
+function permissionPage(){
+ if(staffRole!=='teacher')return toast('Only the teacher can manage permissions.');
+ $('content').innerHTML=`<div class="panel"><div class="section-head"><div><h2>Assistant permissions</h2><div class="muted">Choose exactly which areas the assistant can use. Changes are saved to Firestore.</div></div></div><form id="assistant-permissions-form"><div style="display:grid;gap:12px">${PERMISSION_LABELS.map(([k,label])=>`<label style="display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);border-radius:9px"><input type="checkbox" name="${k}" ${staffPermissions[k]?'checked':''} style="width:18px;height:18px"> <span>${label}</span></label>`).join('')}</div><div class="actions" style="margin-top:18px"><button class="btn primary">Save permissions</button><button type="button" class="btn secondary" id="permissions-defaults">Restore defaults</button></div><p class="hint">These controls change what appears and works in this dashboard. Firestore Security Rules must also enforce the same permissions to protect the database from direct requests.</p></form></div>`;
+ $('permissions-defaults').onclick=()=>{$('assistant-permissions-form').querySelectorAll('input[type=checkbox]').forEach(x=>x.checked=!!DEFAULT_ASSISTANT_PERMISSIONS[x.name])};
+ $('assistant-permissions-form').onsubmit=async e=>{e.preventDefault();const next={};for(const [k] of PERMISSION_LABELS)next[k]=!!e.target.elements[k].checked;try{await setDoc(doc(db,'settings','assistantPermissions'),{...next,updatedAt:serverTimestamp(),updatedBy:staffRole||'teacher'});staffPermissions=next;renderTabs();toast('Assistant permissions saved.')}catch(err){console.error(err);toast('Could not save permissions. Check Firestore rules.')}};
+}
+function applyRoleUI(){
+ $('login-screen').style.display=staffRole?'none':'grid';$('staff-logout').style.display=staffRole?'inline-flex':'none';$('staff-badge').textContent=staffRole?(staffRole==='teacher'?'Signed in: Teacher — full access':'Signed in: Assistant — permission-limited access'):'';
+ $('danger-zone-link').style.display=permissionAllowed('dangerZone')?'flex':'none';renderTabs();
+}
+function gateAction(fn,key){if(typeof window[fn]!=='function')return;const original=window[fn];window[fn]=function(...args){if(!permissionAllowed(key)){toast('You do not have permission to do that.');return}return original.apply(this,args)}}
+// UI-level action gates. Firestore rules are still required for real database security.
+gateAction('newCourse','coursesEdit');gateAction('openCourse','coursesView');gateAction('openLesson','coursesView');gateAction('openStudent','studentsView');gateAction('editCourse','coursesEdit');gateAction('deleteCourse','coursesDelete');gateAction('newLesson','coursesEdit');gateAction('editLesson','coursesEdit');gateAction('deleteLesson','coursesDelete');gateAction('partForm','coursesEdit');gateAction('movePart','coursesEdit');gateAction('deletePart','coursesEdit');gateAction('newQuiz','coursesEdit');gateAction('editQuiz','coursesEdit');gateAction('deleteQuiz','coursesDelete');gateAction('deleteLessonResource','coursesEdit');gateAction('verifyStudent','studentsVerify');gateAction('stBlock','studentsAccess');gateAction('stGrant','studentsAccess');gateAction('stEnroll','studentsAccess');gateAction('toggleStudentPause','studentsAccess');gateAction('editStudentInstruction','studentsEdit');gateAction('editStudent','studentsEdit');gateAction('deleteStudent','studentsDelete');gateAction('viewReceipt','paymentsView');gateAction('reviewPayment','paymentsManage');
+const _loadContact=contact;contact=async()=>{if(!permissionAllowed('contactManage')&&staffRole!=='teacher')return toast('You do not have permission to manage contact information.');return _loadContact()};
+async function sha256(value){const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('')}
+async function startStaffSession(role){
+ staffRole=role;
+ try{const snap=await getDoc(doc(db,'settings','assistantPermissions'));staffPermissions=snap.exists()?{...DEFAULT_ASSISTANT_PERMISSIONS,...snap.data()}:{...DEFAULT_ASSISTANT_PERMISSIONS}}
+ catch(e){console.error(e);staffPermissions={...DEFAULT_ASSISTANT_PERMISSIONS}}
+ if(staffRole==='assistant'){staffPermissions.paymentsView=!!staffPermissions.paymentsView;staffPermissions.dangerZone=!!staffPermissions.dangerZone}
+ applyRoleUI();load('overview');
+}
+$('staff-login').addEventListener('submit',async e=>{
+ e.preventDefault();const btn=$('login-submit'),err=$('login-error');btn.disabled=true;err.textContent='';
+ try{
+  const entered=$('staff-id').value.trim();
+  const digest=await sha256(entered);
+  const role=Object.keys(STAFF_ID_HASHES).find(k=>STAFF_ID_HASHES[k]===digest);
+  if(!role){err.textContent='Invalid Staff ID.';btn.disabled=false;return}
+  localStorage.setItem(STAFF_SESSION_KEY,JSON.stringify({hash:digest,role}));
+  await startStaffSession(role);
+ }catch(error){console.error(error);err.textContent='Could not sign in. Please try again.';btn.disabled=false}
+});
+$('staff-logout').onclick=()=>{localStorage.removeItem(STAFF_SESSION_KEY);staffRole=null;staffPermissions={};active='overview';applyRoleUI();$('content').innerHTML='';$('staff-id').value='';$('login-error').textContent=''};
+(async()=>{
+ try{
+  const saved=JSON.parse(localStorage.getItem(STAFF_SESSION_KEY)||'null');
+  if(saved&&saved.hash&&saved.role&&STAFF_ID_HASHES[saved.role]===saved.hash){await startStaffSession(saved.role);return}
+ }catch(e){console.warn('Invalid saved staff session',e)}
+ localStorage.removeItem(STAFF_SESSION_KEY);applyRoleUI();
+})();
 </script></body></html>
