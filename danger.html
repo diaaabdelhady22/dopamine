@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
+<title>DOPAMINE — Danger Zone</title><link rel="icon" href="icon.png">
+<style>
+:root{--navy:#132238;--orange:#f47b20;--bg:#f7f8fa;--line:#e5e9ee;--muted:#687588;--danger:#c63d3d;--shadow:0 12px 32px rgba(20,38,61,.07)}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--navy);font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}button,input{font:inherit}button{cursor:pointer}
+.container{width:min(760px,calc(100% - 36px));margin:auto}
+.header{height:72px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center}
+.header .container{display:flex;align-items:center;justify-content:space-between}
+.brand img{height:34px;width:auto}
+.btn{border:0;border-radius:9px;padding:11px 16px;font-weight:700;display:inline-flex;align-items:center;gap:8px}
+.secondary{background:#fff;color:var(--navy);border:1px solid var(--line)}
+.btn-danger{background:var(--danger);color:#fff}.btn-danger:disabled{opacity:.45;cursor:not-allowed}
+main{padding:40px 0 70px}
+.panel{background:#fff;border:1px solid #efd5d5;border-radius:13px;padding:26px;box-shadow:var(--shadow)}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--danger);font-weight:800}
+h1{margin:6px 0 8px;font-size:30px}.muted{color:var(--muted);line-height:1.6}
+.row{margin-top:22px;padding-top:20px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap}
+.mi{font-family:"Material Symbols Outlined";font-size:20px;line-height:1;vertical-align:middle}
+.modal{position:fixed;inset:0;background:rgba(15,25,38,.5);display:none;align-items:center;justify-content:center;padding:20px;z-index:100}.modal.open{display:flex}
+.modal-box{width:min(480px,100%);background:#fff;border-radius:14px;padding:24px}
+.modal-box h2{margin:0 0 10px;color:var(--danger)}
+.modal-box input{width:100%;border:1px solid #dce2e8;border-radius:8px;padding:11px 12px;margin:12px 0;outline:none}
+.modal-box input:focus{border-color:var(--danger)}
+.actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:6px}
+code{background:#f1f3f5;padding:2px 6px;border-radius:5px;font-weight:700}
+.toast{position:fixed;right:18px;bottom:18px;background:var(--navy);color:#fff;padding:12px 15px;border-radius:9px;display:none;z-index:200;font-size:13px}.toast.show{display:block}
+</style>
+</head>
+<body>
+<header class="header"><div class="container"><a class="brand" href="admin.html"><img src="logo.png" alt="DOPAMINE"></a><button class="btn secondary" onclick="location.href='admin.html'"><span class="mi">arrow_back</span>Back to Admin</button></div></header>
+<main><div class="container">
+<div class="panel">
+<div class="eyebrow">Danger Zone</div>
+<h1>Empty Database</h1>
+<div class="muted">This permanently deletes everything in the database: students, courses, lessons (and their resources), enrollments, payment requests and all settings. This cannot be undone.</div>
+<div class="row"><strong>Delete all data</strong><button class="btn btn-danger" id="empty-btn"><span class="mi">delete_forever</span>Empty Database</button></div>
+</div>
+</div></main>
+
+<div id="modal" class="modal"></div><div id="toast" class="toast"></div>
+
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+import {getFirestore,collection,getDocs,deleteDoc} from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
+const firebaseConfig={apiKey:"AIzaSyDD1_ssoVaIyIfwYAs7jT_g0pFdr1IlI",authDomain:"dorar-17b10.firebaseapp.com",projectId:"dorar-17b10",storageBucket:"dorar-17b10.firebasestorage.app",messagingSenderId:"740800324300",appId:"1:740800324300:web:cd819b2910a53475af5869"};
+const app=initializeApp(firebaseConfig),db=getFirestore(app);
+const $=id=>document.getElementById(id);
+const CONFIRM_WORD='DELETE ALL';
+const TOP_COLLECTIONS=['users','courses','paymentRequests','enrollments','settings'];
+function toast(t){$('toast').textContent=t;$('toast').classList.add('show');setTimeout(()=>$('toast').classList.remove('show'),3500)}
+function openModal(html){$('modal').innerHTML=`<div class="modal-box">${html}</div>`;$('modal').classList.add('open')}
+function closeModal(){$('modal').classList.remove('open');$('modal').innerHTML=''}
+
+$('empty-btn').onclick=()=>{
+  openModal(`<h2>Are you sure?</h2><div class="muted">You are about to delete <strong>all data</strong> from the database. This action is permanent.</div><div class="actions" style="margin-top:18px"><button class="btn secondary" id="no1">Cancel</button><button class="btn btn-danger" id="yes1">Yes, continue</button></div>`);
+  $('no1').onclick=closeModal;
+  $('yes1').onclick=step2;
+};
+
+function step2(){
+  openModal(`<h2>Final confirmation</h2><div class="muted">Type <code>${CONFIRM_WORD}</code> below to confirm.</div><input id="confirm-input" autocomplete="off" placeholder="${CONFIRM_WORD}"><div class="actions"><button class="btn secondary" id="no2">Cancel</button><button class="btn btn-danger" id="yes2" disabled><span class="mi">delete_forever</span>Delete everything</button></div>`);
+  const input=$('confirm-input'),yes=$('yes2');
+  input.oninput=()=>{yes.disabled=input.value.trim()!==CONFIRM_WORD};
+  $('no2').onclick=closeModal;
+  yes.onclick=async()=>{
+    if(input.value.trim()!==CONFIRM_WORD)return;
+    yes.disabled=true;$('no2').disabled=true;yes.textContent='Deleting...';
+    try{await wipe();closeModal();toast('Database emptied successfully.')}
+    catch(e){console.error(e);closeModal();toast('Something went wrong. Some data may remain.')}
+  };
+}
+
+async function wipeCollection(colRef){
+  const snap=await getDocs(colRef);
+  for(const d of snap.docs){
+    // lessons live under courses/{id}/lessons
+    if(colRef.path==='courses'){await wipeCollection(collection(d.ref,'lessons'))}
+    await deleteDoc(d.ref);
+  }
+}
+async function wipe(){for(const name of TOP_COLLECTIONS)await wipeCollection(collection(db,name))}
+</script>
+</body></html>
