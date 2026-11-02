@@ -74,7 +74,7 @@ window.load=s=>{if(!staffRole)return;if(s==='permissions'&&staffRole!=='teacher'
 window.openCourse=e=>{if(!permissionAllowed('coursesView'))return toast('You do not have permission to view courses.');return guard('courses',()=>coursePage(dec(e)))};
 window.openLesson=(a,b,k)=>{if(!permissionAllowed('coursesView'))return toast('You do not have permission to view courses.');curKind=k==='homework'?'homework':'lessons';return guard('courses',()=>lessonPage(dec(a),dec(b)))};
 window.openStudent=e=>{if(!permissionAllowed('studentsView'))return toast('You do not have permission to view students.');return guard('students',()=>studentPage(dec(e)))};
-async function refresh(){const v=view;try{if(v.name==='course')await coursePage(v.cid);else if(v.name==='lesson')await lessonPage(v.cid,v.lid);else if(v.name==='student')await studentPage(v.sid);else await load(active)}catch(e){console.error(e);toast('Something went wrong.')}}
+async function refresh(){const v=view;try{if(v.name==='course')await coursePage(v.cid);else if(v.name==='lesson')await lessonPage(v.cid,v.lid);else if(v.name==='student')await studentPage(v.sid);else if(v.name==='quiz')await quizAttemptsPage(v.cid,v.qid);else await load(active)}catch(e){console.error(e);toast('Something went wrong.')}}
 
 /* ---------- Overview ---------- */
 async function overview(){
@@ -141,7 +141,7 @@ async function coursePage(cid){
     const parts=(l.parts||[]).length+(l.videoId||l.youtubeVideoId||l.youtubeUrl?1:0);
     return `<tr class="row-click" onclick="openLesson('${enc(cid)}','${enc(l.id)}')"><td><span class="badge ok">Lesson</span></td><td><strong>${esc(l.title||'Untitled Lesson')}</strong></td><td>${Number(l.order)||1}</td><td>${parts} part(s)${(l.resources||[]).length?` · ${(l.resources||[]).length} file(s)`:''}</td><td><div class="actions" onclick="event.stopPropagation()"><button class="btn secondary" onclick="openLesson('${enc(cid)}','${enc(l.id)}')"><span class="mi">folder_open</span>Open</button><button class="btn secondary" onclick="editLesson('${enc(cid)}','${enc(l.id)}')"><span class="mi">edit</span></button><button class="btn danger" onclick="deleteLesson('${enc(cid)}','${enc(l.id)}')"><span class="mi">delete</span></button></div></td></tr>`}).join('');
   const hwRows=homework.map(l=>{const parts=(l.parts||[]).length+(l.videoId||l.youtubeVideoId||l.youtubeUrl?1:0);const H=`'${enc(cid)}','${enc(l.id)}','homework'`;return `<tr class="row-click" onclick="openLesson(${H})"><td><span class="badge" style="background:#eaf1fb;color:#2a5db0">Homework</span></td><td><strong>${esc(l.title||'Untitled Homework')}</strong></td><td>${Number(l.order)||1}</td><td>${parts} part(s)${(l.resources||[]).length?` · ${(l.resources||[]).length} file(s)`:''}</td><td><div class="actions" onclick="event.stopPropagation()"><button class="btn secondary" onclick="openLesson(${H})"><span class="mi">folder_open</span>Open</button><button class="btn secondary" onclick="editLesson(${H})"><span class="mi">edit</span></button><button class="btn danger" onclick="deleteLesson(${H})"><span class="mi">delete</span></button></div></td></tr>`}).join('');
-  const quizRows=quizzes.map(q=>`<tr><td><span class="badge warn">Quiz</span></td><td><strong>${esc(q.title||'Untitled quiz')}</strong></td><td>${Number(q.order)||1}</td><td>${Number(q.durationMinutes)||30} min</td><td><div class="actions"><button class="btn secondary" onclick="editQuiz('${enc(cid)}','${enc(q.id)}')"><span class="mi">edit</span>Edit</button><button class="btn danger" onclick="deleteQuiz('${enc(cid)}','${enc(q.id)}')"><span class="mi">delete</span></button></div></td></tr>`).join('');
+  const quizRows=quizzes.map(q=>`<tr><td><span class="badge warn">Quiz</span></td><td><strong>${esc(q.title||'Untitled quiz')}</strong></td><td>${Number(q.order)||1}</td><td>${Number(q.durationMinutes)||30} min</td><td><div class="actions">${permissionAllowed('quizAttemptsGrant')?`<button class="btn secondary" onclick="openQuizAttempts('${enc(cid)}','${enc(q.id)}')"><span class="mi">how_to_reg</span>Attempts</button>`:''}<button class="btn secondary" onclick="editQuiz('${enc(cid)}','${enc(q.id)}')"><span class="mi">edit</span>Edit</button><button class="btn danger" onclick="deleteQuiz('${enc(cid)}','${enc(q.id)}')"><span class="mi">delete</span></button></div></td></tr>`).join('');
   $('content').innerHTML=`${crumbs([['Courses',"load('courses')"],[c.title||'Course',null]])}
   <div class="panel"><div class="section-head"><div class="row-title">${thumb?`<img class="course-thumb" src="${esc(thumb)}" alt="">`:''}<div><h2>${esc(c.title||'Untitled')}</h2><div class="muted">${esc(c.description||'')}</div></div></div><div class="actions"><button class="btn secondary" onclick="editCourse('${enc(cid)}')"><span class="mi">edit</span>Edit course</button><button class="btn danger" onclick="deleteCourse('${enc(cid)}')"><span class="mi">delete</span></button></div></div>
   <div class="info-grid"><div><div class="k">Access</div><div class="v">${esc(modeLabel(c))}</div></div>${modeOf(c)==='course_code'?`<div><div class="k">Course code</div><div class="v">${esc(c.courseAccessCode||'—')}</div></div>`:''}<div><div class="k">Lessons</div><div class="v">${lessons.length}</div></div><div><div class="k">Homework</div><div class="v">${homework.length}</div></div><div><div class="k">Quizzes</div><div class="v">${quizzes.length}</div></div></div></div>
@@ -286,6 +286,70 @@ function quizForm(cid,q={},qid=''){
 window.newQuiz=async e=>{const cid=dec(e),n=(await getDocs(collection(db,'courses',cid,'quizzes'))).size;quizForm(cid,{order:n+1})};
 window.editQuiz=async(a,b)=>{const cid=dec(a),qid=dec(b),s=await getDoc(doc(db,'courses',cid,'quizzes',qid));if(s.exists())quizForm(cid,s.data(),qid)};
 window.deleteQuiz=async(a,b)=>{if(!confirm('Delete this quiz?'))return;try{await deleteDoc(doc(db,'courses',dec(a),'quizzes',dec(b)));toast('Quiz deleted.');refresh()}catch{toast('Could not delete quiz.')}};
+/* ---------- Quiz attempts: give one student (or everyone) a new attempt ---------- */
+let qaState={cid:'',qid:'',quiz:{},students:[],attempts:{},grants:{},search:''};
+const ATTEMPT_LABELS={submitted:'Submitted',started:'Started',exited:'Left the exam',expired:'Time expired'};
+const attemptKey=(cid,qid)=>`${cid}_${qid}`;
+function attemptInProgress(a,quiz){if(!a||a.status!=='started')return false;const mins=Number(a.durationMinutes)||Number(quiz.durationMinutes)||30,st=dateValue(a.startedAt);return !!st&&Date.now()-st<(mins+1)*60000}
+function qaRowsHtml(list){
+  const {cid,qid,quiz,attempts,grants}=qaState;
+  if(!list.length)return `<tr><td colspan="5"><div class="empty">No students found.</div></td></tr>`;
+  return list.map(u=>{
+    const a=attempts[u.id],extra=Number((grants[u.id]||{}).count)||0,live=attemptInProgress(a,quiz);
+    const badge=!a?`<span class="badge ok">Attempt available</span>`:live?`<span class="badge warn">In the exam now</span>`:`<span class="badge bad">Used · ${esc(ATTEMPT_LABELS[a.status]||a.status||'Used')}</span>`;
+    return `<tr><td><strong>${esc(u.fullName||'—')}</strong></td><td>${esc(u.phone||'—')}</td><td>${badge}</td><td>${extra?`${extra} extra`:'—'}</td><td><button class="btn primary sm" ${a?'':'disabled'} onclick="grantQuizAttempt('${enc(u.id)}')"><span class="mi">replay</span>Give attempt</button></td></tr>`;
+  }).join('');
+}
+function renderQaRows(){
+  const {students,attempts,search}=qaState,q=String(search||'').trim().toLowerCase(),qd=q.replace(/\D/g,'');
+  const list=!q?students:students.filter(u=>String(u.fullName||'').toLowerCase().includes(q)||String(u.email||'').toLowerCase().includes(q)||String(u.phone||'').toLowerCase().includes(q)||(qd&&String(u.phone||'').replace(/\D/g,'').includes(qd)));
+  const used=students.filter(u=>attempts[u.id]).length;
+  $('qa-body').innerHTML=qaRowsHtml(list);$('qa-count').textContent=`${list.length} of ${students.length} student(s)`;$('qa-used').textContent=used;$('qa-free').textContent=students.length-used;
+}
+window.filterQaStudents=v=>{qaState.search=v;renderQaRows()};
+window.openQuizAttempts=(a,b)=>{if(!permissionAllowed('quizAttemptsGrant'))return toast('You do not have permission to manage quiz attempts.');return guard('courses',()=>quizAttemptsPage(dec(a),dec(b)))};
+async function quizAttemptsPage(cid,qid){
+  view={name:'quiz',cid,qid};
+  if(!permissionAllowed('quizAttemptsGrant')){$('content').innerHTML='<div class="panel"><div class="empty">You do not have permission to manage quiz attempts.</div></div>';return}
+  const [cs,qs,us,gs]=await Promise.all([getDoc(doc(db,'courses',cid)),getDoc(doc(db,'courses',cid,'quizzes',qid)),getDocs(collection(db,'users')),getDocs(collection(db,'courses',cid,'quizzes',qid,'attemptGrants')).catch(()=>null)]);
+  if(!cs.exists()||!qs.exists()){$('content').innerHTML='<div class="panel"><div class="empty">Quiz not found.</div></div>';return}
+  const c=cs.data(),quiz=qs.data();
+  const students=us.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.role==='student').sort((a,b)=>String(a.fullName||'').localeCompare(String(b.fullName||'')));
+  const attempts={};
+  await Promise.all(students.map(async u=>{try{const a=await getDoc(doc(db,'users',u.id,'quizAttempts',attemptKey(cid,qid)));attempts[u.id]=a.exists()?a.data():null}catch(e){attempts[u.id]=null}}));
+  const grants={};if(gs)gs.docs.forEach(d=>grants[d.id]=d.data());
+  qaState={cid,qid,quiz,students,attempts,grants,search:''};
+  $('content').innerHTML=`${crumbs([['Courses',"load('courses')"],[c.title||'Course',`openCourse('${enc(cid)}')`],[quiz.title||'Quiz',null]])}
+  <div class="panel"><div class="section-head"><div><h2>${esc(quiz.title||'Quiz')} — Attempts</h2><div class="muted">Give a student another attempt, or open a new attempt for everyone. A student who gets a new attempt can start this quiz again.</div></div><div class="actions">${permissionAllowed('quizAttemptsGrantAll')?`<button class="btn primary" onclick="grantQuizAttemptAll()"><span class="mi">groups</span>Attempt 2 for everyone</button>`:''}</div></div>
+  <div class="info-grid"><div><div class="k">Students</div><div class="v">${students.length}</div></div><div><div class="k">Attempt used</div><div class="v" id="qa-used">0</div></div><div><div class="k">Attempt available</div><div class="v" id="qa-free">0</div></div><div><div class="k">Duration</div><div class="v">${Number(quiz.durationMinutes)||30} min</div></div></div></div>
+  <div class="panel"><div class="section-head"><div><h2>Students</h2><div id="qa-count" class="muted"></div></div></div><div class="search-box"><span class="mi">search</span><input id="qa-search" type="search" placeholder="Search by name, phone or email" oninput="filterQaStudents(this.value)" autocomplete="off"></div><div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Phone</th><th>Attempt status</th><th>Extra attempts given</th><th></th></tr></thead><tbody id="qa-body"></tbody></table></div></div>`;
+  renderQaRows();
+}
+async function resetAttempt(sid){
+  const {cid,qid,grants,attempts}=qaState,prev=attempts[sid];
+  await deleteDoc(doc(db,'users',sid,'quizAttempts',attemptKey(cid,qid)));
+  const count=(Number((grants[sid]||{}).count)||0)+1;
+  try{await setDoc(doc(db,'courses',cid,'quizzes',qid,'attemptGrants',sid),{studentId:sid,count,lastGrantedAt:serverTimestamp(),lastGrantedBy:staffRole||'teacher',lastPreviousStatus:(prev&&prev.status)||''},{merge:true})}catch(e){console.warn('Attempt log not saved',e)}
+  attempts[sid]=null;grants[sid]={...(grants[sid]||{}),count};
+}
+window.grantQuizAttempt=async e=>{
+  if(!permissionAllowed('quizAttemptsGrant'))return toast('You do not have permission to give quiz attempts.');
+  const sid=dec(e),a=qaState.attempts[sid],u=qaState.students.find(x=>x.id===sid)||{};
+  if(!a)return toast('This student already has an attempt available.');
+  const warn=attemptInProgress(a,qaState.quiz)?'\n\nWarning: this student is inside the exam right now. Giving a new attempt now lets them start again immediately.':'';
+  if(!confirm(`Give ${u.fullName||'this student'} a new attempt for this quiz?${warn}`))return;
+  try{await resetAttempt(sid);renderQaRows();toast('New attempt given.')}catch(err){console.error(err);toast('Could not give the attempt. Check Firestore rules.')}
+};
+window.grantQuizAttemptAll=async()=>{
+  if(!permissionAllowed('quizAttemptsGrantAll'))return toast('You do not have permission to give attempts to everyone.');
+  const {students,attempts,quiz}=qaState;
+  const used=students.filter(u=>attempts[u.id]),live=used.filter(u=>attemptInProgress(attempts[u.id],quiz)),ready=used.filter(u=>!attemptInProgress(attempts[u.id],quiz));
+  if(!ready.length)return toast(live.length?'Everyone with a used attempt is inside the exam right now. Try again later.':'No student has used an attempt yet.');
+  if(!confirm(`Give a new attempt to ${ready.length} student(s) who already used theirs?${live.length?`\n\n${live.length} student(s) are inside the exam right now and will be skipped. Run this again after they finish.`:''}`))return;
+  let ok=0,fail=0;
+  for(let i=0;i<ready.length;i+=15){await Promise.all(ready.slice(i,i+15).map(async u=>{try{await resetAttempt(u.id);ok++}catch(err){console.error(err);fail++}}))}
+  renderQaRows();toast(fail?`Done: ${ok} given, ${fail} failed. Check Firestore rules.`:`New attempt given to ${ok} student(s).`);
+};
 
 /* ---------- Students: list with search ---------- */
 let allStudents=[];
@@ -398,8 +462,8 @@ async function contact(){
   $('content').innerHTML=`<div class="panel"><div class="section-head"><div><h2>Contact Information</h2><div class="muted">These details are used by the public contact page.</div></div></div><form id="cf"><div class="form-grid"><div class="field"><label>Email</label><input id="ce" value="${esc(c.email||'')}"></div><div class="field"><label>Phone</label><input id="cp" value="${esc(c.phone||'')}"></div><div class="field"><label>WhatsApp</label><input id="cw" value="${esc(c.whatsapp||'')}"></div><div class="field"><label>Address</label><input id="ca" value="${esc(c.address||'')}"></div><div class="field"><label>Facebook link</label><input id="cfacebook" type="url" value="${esc(c.facebook||'')}" placeholder="https://facebook.com/..."></div><div class="field"><label>TikTok link</label><input id="ctiktok" type="url" value="${esc(c.tiktok||'')}" placeholder="https://tiktok.com/@..."></div><div class="field"><label>YouTube link</label><input id="cyoutube" type="url" value="${esc(c.youtube||'')}" placeholder="https://youtube.com/@..."></div><div class="field full"><label>Message</label><textarea id="cm">${esc(c.message||'')}</textarea></div></div><button class="btn primary">Save Contact</button></form></div>`;
   $('cf').onsubmit=async e=>{e.preventDefault();try{await setDoc(doc(db,'settings','contact'),{email:$('ce').value.trim(),phone:$('cp').value.trim(),whatsapp:$('cw').value.trim(),address:$('ca').value.trim(),facebook:$('cfacebook').value.trim(),tiktok:$('ctiktok').value.trim(),youtube:$('cyoutube').value.trim(),message:$('cm').value.trim(),updatedAt:serverTimestamp()},{merge:true});toast('Contact information saved.')}catch(error){console.error(error);toast('Could not save contact information.')}};
 }
-const DEFAULT_ASSISTANT_PERMISSIONS={coursesView:true,coursesEdit:true,coursesDelete:false,studentsView:true,studentsEdit:true,studentsAccess:true,studentsVerify:true,studentsDelete:false,paymentsView:false,paymentsManage:false,contactManage:false,dangerZone:false};
-const PERMISSION_LABELS=[['coursesView','View courses and lessons'],['coursesEdit','Create/edit courses, lessons, quizzes and resources'],['coursesDelete','Delete courses, lessons and quizzes'],['studentsView','View student records'],['studentsEdit','Edit student details and instructions'],['studentsAccess','Grant/revoke course or lesson access; pause accounts'],['studentsVerify','Approve/reject student verification'],['studentsDelete','Delete student records'],['paymentsView','View payment requests and receipts'],['paymentsManage','Approve/reject payments and change payment numbers'],['contactManage','Edit contact information'],['dangerZone','Open Danger Zone']];
+const DEFAULT_ASSISTANT_PERMISSIONS={coursesView:true,coursesEdit:true,coursesDelete:false,studentsView:true,studentsEdit:true,studentsAccess:true,studentsVerify:true,studentsDelete:false,paymentsView:false,paymentsManage:false,contactManage:false,quizAttemptsGrant:false,quizAttemptsGrantAll:false,dangerZone:false};
+const PERMISSION_LABELS=[['coursesView','View courses and lessons'],['coursesEdit','Create/edit courses, lessons, quizzes and resources'],['coursesDelete','Delete courses, lessons and quizzes'],['studentsView','View student records'],['studentsEdit','Edit student details and instructions'],['studentsAccess','Grant/revoke course or lesson access; pause accounts'],['studentsVerify','Approve/reject student verification'],['studentsDelete','Delete student records'],['paymentsView','View payment requests and receipts'],['paymentsManage','Approve/reject payments and change payment numbers'],['contactManage','Edit contact information'],['quizAttemptsGrant','Give a student an extra quiz attempt (from the quiz page)'],['quizAttemptsGrantAll','Give ALL students a new quiz attempt (Attempt 2 for everyone)'],['dangerZone','Open Danger Zone']];
 function permissionAllowed(key){return staffRole==='teacher'||!!staffPermissions[key]}
 function permissionPage(){
  if(staffRole!=='teacher')return toast('Only the teacher can manage permissions.');
